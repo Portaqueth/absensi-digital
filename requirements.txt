@@ -1,0 +1,8 @@
+streamlit
+pandas
+plotly
+qrcode
+openpyxl
+Pillow
+numpy
+streamlit-drawable-canvas
