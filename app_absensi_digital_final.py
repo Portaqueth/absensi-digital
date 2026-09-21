@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import re
 import datetime
@@ -8,10 +9,10 @@ from io import BytesIO
 from pathlib import Path
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.drawing.image import Image as OpenpyxlImage
 import base64
 from PIL import Image
 import numpy as np
+import random
 from streamlit_drawable_canvas import st_canvas
 
 # ------------------------------------------------------------
@@ -25,16 +26,14 @@ st.set_page_config(
 
 st.markdown("""
     <style>
-    /* Sembunyikan tulisan Press Enter to submit form bawaan Streamlit */
     div[data-testid="InputInstructions"] {
         display: none !important;
     }
 
-    /* HEADER BANNER CUSTOM (CSS ONLY) */
     .hero-header-banner {
-        background-color: #0E3B2E; /* Hijau Tua Formal */
-        border-top: 3px solid #D4AF37; /* Garis Lis Emas Atas */
-        border-bottom: 3px solid #D4AF37; /* Garis Lis Emas Bawah */
+        background-color: #0E3B2E;
+        border-top: 3px solid #D4AF37;
+        border-bottom: 3px solid #D4AF37;
         padding: 18px 30px;
         border-radius: 6px;
         box-shadow: 0 6px 16px rgba(0,0,0,0.3);
@@ -44,7 +43,6 @@ st.markdown("""
         margin-bottom: 15px;
     }
 
-    /* Outer Ring Lingkaran Emas Logo */
     .hero-logo-ring-outer {
         width: 95px;
         height: 95px;
@@ -64,12 +62,11 @@ st.markdown("""
         filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.4));
     }
 
-    /* Tipografi Teks Header */
     .hero-title-main {
         font-family: 'Montserrat', 'Arial Black', sans-serif;
         font-weight: 900;
         font-size: 23px;
-        color: #E29D29; /* Warna Emas Terang */
+        color: #E29D29;
         letter-spacing: 1px;
         line-height: 1.15;
         text-transform: uppercase;
@@ -80,13 +77,12 @@ st.markdown("""
         font-family: 'Arial', sans-serif;
         font-weight: 600;
         font-size: 15px;
-        color: #D4AF37; /* Warna Emas Soft */
+        color: #D4AF37;
         letter-spacing: 1.5px;
         text-transform: uppercase;
         margin-top: 3px;
     }
 
-    /* Card Info Agenda & Status */
     .agenda-card {
         background: #F4F6F4;
         border-left: 5px solid #1B5E20;
@@ -126,12 +122,10 @@ st.markdown("""
         box-shadow: 0 0 6px #00E676;
     }
 
-    /* Custom Styling Elemen Warna */
     h1 { color: #1B5E20 !important; }
     h2, h3 { color: #C67D0A !important; }
     div[data-testid="stMetricValue"] { color: #1B5E20 !important; font-weight: bold; }
 
-    /* Tombol Submit Modern */
     div[data-testid="stFormSubmitButton"] > button {
         background: linear-gradient(135deg, #D87A00 0%, #B25900 100%) !important;
         color: white !important;
@@ -154,18 +148,41 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------
-# SESSION STATES
+# SESSION STATES & KONEKSI GOOGLE SHEETS
 # ------------------------------------------------------------
+conn = st.connection("gsheets", type=GSheetsConnection)
+
 if "nama_event" not in st.session_state:
     st.session_state.nama_event = "Kegiatan Sosialisasi & Bimbingan Teknis"
 
 if "jenis_presensi" not in st.session_state:
     st.session_state.jenis_presensi = "Presensi Zoom"
 
-if "df_absensi" not in st.session_state:
-    st.session_state.df_absensi = pd.DataFrame(columns=[
-        "Waktu Absen", "Jam Absen", "Jenis Presensi", "Nama Peserta (EYD)", "NIP", "Jabatan (EYD)", "OPD / Instansi", "Email", "Tanda Tangan", "Keterangan Status", "_ttd_bytes"
-    ])
+if "target_sheet_name" not in st.session_state:
+    st.session_state.target_sheet_name = "Sheet1"
+
+def load_data_from_gsheets():
+    sheet_name = st.session_state.target_sheet_name
+    try:
+        df = conn.read(worksheet=sheet_name, ttl=0)
+        return df
+    except Exception:
+        return pd.DataFrame(columns=[
+            "Waktu Absen", "Jam Absen", "Jenis Presensi", "Nama Peserta (EYD)", "NIP", "Jabatan (EYD)", "OPD / Instansi", "Email", "Tanda Tangan", "Keterangan Status"
+        ])
+
+def save_data_to_gsheets(new_row_df, existing_df):
+    sheet_name = st.session_state.target_sheet_name
+    cols_to_save = [c for c in existing_df.columns if c != "_ttd_bytes"]
+    clean_existing = existing_df[cols_to_save] if not existing_df.empty else pd.DataFrame(columns=cols_to_save)
+    clean_new = new_row_df[cols_to_save]
+    
+    updated_df = pd.concat([clean_existing, clean_new], ignore_index=True)
+    conn.update(worksheet=sheet_name, data=updated_df)
+    st.cache_data.clear()
+
+# Muat data dari Google Sheets berdasarkan sheet aktif
+st.session_state.df_absensi = load_data_from_gsheets()
 
 if "cutoff_enabled" not in st.session_state:
     st.session_state.cutoff_enabled = False
@@ -184,8 +201,18 @@ if "is_admin_logged_in" not in st.session_state:
 
 ADMIN_PIN = "4869"
 
+if "random_nip_placeholder" not in st.session_state:
+    y = random.randint(1975, 2002)
+    m = f"{random.randint(1, 12):02d}"
+    d = f"{random.randint(1, 28):02d}"
+    y_pns = y + random.randint(20, 26)
+    m_pns = f"{random.randint(1, 12):02d}"
+    gender = random.choice([1, 2])
+    seq = f"{random.randint(1, 999):03d}"
+    st.session_state.random_nip_placeholder = f"Contoh: {y}{m}{d}{y_pns}{m_pns}{gender}{seq}"
+
 # ------------------------------------------------------------
-# HEADER BANNER MURNI CSS (TAMPIL DI SEMUA HALAMAN)
+# HEADER BANNER MURNI CSS
 # ------------------------------------------------------------
 def get_image_base64(image_path):
     with open(image_path, "rb") as img_file:
@@ -197,7 +224,6 @@ if local_logo_badung.exists():
 else:
     LOGO_BADUNG = "https://upload.wikimedia.org/wikipedia/commons/1/1a/Lambang_Kabupaten_Badung.portal.png"
 
-# HTML & CSS Header Sesuai Gambar Desain
 st.markdown(f"""
     <div class="hero-header-banner">
         <div class="hero-logo-ring-outer">
@@ -210,7 +236,6 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# Baris Informasi Agenda & Status Presensi
 badge_label = "PRESENSI ZOOM AKTIF" if st.session_state.jenis_presensi == "Presensi Zoom" else "PRESENSI TATAP MUKA AKTIF"
 
 st.markdown(f"""
@@ -223,7 +248,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------
-# NAVIGASI SIDEBAR & AUTO-LOGOUT ADMIN
+# NAVIGASI SIDEBAR
 # ------------------------------------------------------------
 st.sidebar.title("📌 Menu Navigasi")
 menu_pilihan = st.sidebar.radio(
@@ -231,7 +256,6 @@ menu_pilihan = st.sidebar.radio(
     ["📝 Form Absensi & Dashboard", "📱 Scan QR Code", "🔐 Panel Admin (Khusus Panitia)"]
 )
 
-# Jika beralih dari Panel Admin ke menu lain, otomatis logout sesi Admin
 if menu_pilihan != "🔐 Panel Admin (Khusus Panitia)":
     st.session_state.is_admin_logged_in = False
 
@@ -250,7 +274,7 @@ LIST_OPD = [
     "Dinas Pengendalian Penduduk, Keluarga Berencana, Pemberdayaan Perempuan dan Perlindungan Anak",
     "Dinas Perhubungan", "Dinas Komunikasi dan Informatika",
     "Dinas Koperasi, Usaha Kecil Menengah dan Perdagangan",
-    "Dinas Penanaman Modal dan Pelayanan Terpatu Satu Pintu", "Dinas Kebudayaan",
+    "Dinas Penanaman Modal dan Pelayanan Terpadu Satu Pintu", "Dinas Kebudayaan",
     "Dinas Kearsipan dan Perpustakaan", "Dinas Perikanan", "Dinas Pariwisata",
     "Dinas Pertanian dan Pangan", "Dinas Perindustrian dan Tenaga Kerja",
     "Satuan Polisi Pamong Praja", "Kecamatan Kuta", "Kecamatan Kuta Utara",
@@ -363,13 +387,11 @@ def export_formatted_excel(df: pd.DataFrame, nama_event: str) -> bytes:
         bottom=Side(style='thin', color='D0D0D0')
     )
 
-    # Header Laporan
     ws.append(["BAGIAN ORGANISASI KABUPATEN BADUNG"])
     ws.append([f"REKAPITULASI PRESENSI: {nama_event.upper()}"])
     ws.append([f"Tanggal Ekspor: {datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')} WITA"])
     ws.append([])
 
-    # Kolom Laporan (Tanpa kolom internal _ttd_bytes)
     export_cols = [c for c in df.columns if c != "_ttd_bytes"]
     headers = ["No"] + export_cols
     ws.append(headers)
@@ -382,9 +404,6 @@ def export_formatted_excel(df: pd.DataFrame, nama_event: str) -> bytes:
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = thin_border
 
-    ttd_col_idx = headers.index("Tanda Tangan") + 1 if "Tanda Tangan" in headers else -1
-
-    # Perulangan berbasis indeks baris (df.iloc) agar aman dari KeyError
     for i in range(len(df)):
         r_idx = i + 1
         row_num = header_row_idx + r_idx
@@ -394,10 +413,6 @@ def export_formatted_excel(df: pd.DataFrame, nama_event: str) -> bytes:
         
         status_val = str(df.iloc[i].get("Keterangan Status", ""))
         is_dup = (status_val == "DUPLIKAT / ABSEN GANDA")
-        
-        ttd_bytes = df.iloc[i].get("_ttd_bytes", None)
-        if ttd_bytes and not pd.isna(ttd_bytes):
-            ws.row_dimensions[row_num].height = 45
 
         for c_idx in range(1, len(row_values) + 1):
             cell = ws.cell(row=row_num, column=c_idx)
@@ -407,21 +422,6 @@ def export_formatted_excel(df: pd.DataFrame, nama_event: str) -> bytes:
             if is_dup:
                 cell.fill = fill_dup
 
-        # Tampilkan Gambar Tanda Tangan jika ada
-        if ttd_bytes and not pd.isna(ttd_bytes) and ttd_col_idx > 0:
-            try:
-                img_io = BytesIO(ttd_bytes)
-                img = OpenpyxlImage(img_io)
-                img.width = 110
-                img.height = 40
-                
-                cell_address = ws.cell(row=row_num, column=ttd_col_idx).coordinate
-                ws.cell(row=row_num, column=ttd_col_idx).value = ""
-                ws.add_image(img, cell_address)
-            except Exception:
-                pass
-
-    # Lebar Kolom Otomatis
     for col in ws.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = openpyxl.utils.get_column_letter(col[0].column)
@@ -439,11 +439,9 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
     
     now_time = datetime.datetime.now().time()
     
-    # Cek Batas Waktu (Jam)
     is_closed_by_time = st.session_state.cutoff_enabled and (now_time > st.session_state.cutoff_time)
     
-    # Cek Batas Maksimal Kuota Peserta (Hanya Menghitung Data Valid)
-    total_valid_peserta = len(st.session_state.df_absensi[st.session_state.df_absensi["Keterangan Status"] == "UTAMA / VALID"]) if not st.session_state.df_absensi.empty else 0
+    total_valid_peserta = len(st.session_state.df_absensi[st.session_state.df_absensi["Keterangan Status"] == "UTAMA / VALID"]) if not st.session_state.df_absensi.empty and "Keterangan Status" in st.session_state.df_absensi.columns else 0
     is_closed_by_quota = st.session_state.max_peserta_enabled and (total_valid_peserta >= st.session_state.max_peserta_limit)
     
     if is_closed_by_time:
@@ -456,7 +454,7 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
         col1, col2 = st.columns(2)
         with col1:
             in_nama = st.text_input("Nama Lengkap & Gelar (EYD):", placeholder="Contoh: aditya putra, se")
-            in_nip = st.text_input("NIP (18 Digit Angka):", placeholder="Contoh: 198501012010011001")
+            in_nip = st.text_input("NIP (18 Digit Angka):", placeholder=st.session_state.random_nip_placeholder)
             in_jabatan = st.text_input("Jabatan (EYD):", placeholder="Contoh: analis kebijakan ahli muda")
         
         with col2:
@@ -477,7 +475,6 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
             st.markdown("### ✍️ Tanda Tangan Digital Peserta")
             st.caption("Silakan bubuhkan tanda tangan Anda pada area kotak di bawah ini menggunakan jari atau stylus HP:")
             
-            # Dynamic key agar canvas TTD dapat di-reset oleh peserta[cite: 2]
             if "canvas_key" not in st.session_state:
                 st.session_state.canvas_key = "canvas_ttd_0"
 
@@ -494,7 +491,6 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
                 key=st.session_state.canvas_key
             )
             
-            # Tombol untuk mengosongkan/mengulangi TTD[cite: 2]
             if st.button("🗑️ Hapus / Ulangi Tanda Tangan"):
                 st.session_state.canvas_key = f"canvas_ttd_{datetime.datetime.now().timestamp()}"
                 st.rerun()
@@ -531,14 +527,14 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
                 
                 df_ex = st.session_state.df_absensi
                 is_dup = False
-                if not df_ex.empty:
+                if not df_ex.empty and "NIP" in df_ex.columns:
                     em_c = clean_cmp(email_clean)
                     nm_c = clean_cmp(nama_eyd)
                     nip_c = clean_cmp(in_nip)
                     for _, r in df_ex.iterrows():
-                        if (is_zoom_mode and em_c and em_c == clean_cmp(r["Email"])) or \
-                           (nm_c and nm_c == clean_cmp(r["Nama Peserta (EYD)"])) or \
-                           (nip_c and len(nip_c) >= 18 and nip_c == clean_cmp(r["NIP"])):
+                        if (is_zoom_mode and em_c and "Email" in r and em_c == clean_cmp(r["Email"])) or \
+                           (nm_c and "Nama Peserta (EYD)" in r and nm_c == clean_cmp(r["Nama Peserta (EYD)"])) or \
+                           (nip_c and len(nip_c) >= 18 and "NIP" in r and nip_c == clean_cmp(r["NIP"])):
                             is_dup = True
                             break
                             
@@ -554,15 +550,20 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
                     "OPD / Instansi": in_opd,
                     "Email": email_clean,
                     "Tanda Tangan": ttd_status,
-                    "Keterangan Status": status_abs,
-                    "_ttd_bytes": ttd_bytes_data
+                    "Keterangan Status": status_abs
                 }
                 
-                st.session_state.df_absensi = pd.concat([pd.DataFrame([new_row]), df_ex], ignore_index=True)
+                new_row_df = pd.DataFrame([new_row])
+                
+                with st.spinner(f"Menyimpan presensi ke Google Sheets (Tab: {st.session_state.target_sheet_name})..."):
+                    save_data_to_gsheets(new_row_df, df_ex)
+                
                 if is_dup:
                     st.warning(f"⚠️ Presensi diterima, namun ditandai sebagai **{status_abs}**.")
                 else:
-                    st.success(f"✅ Presensi Berhasil Disimpan! Terima kasih, **{nama_eyd}**.")
+                    st.success(f"✅ Presensi Berhasil Disimpan & Terintegrasi Google Sheets! Terima kasih, **{nama_eyd}**.")
+                
+                st.rerun()
 
     # DASHBOARD MONITORING
     st.markdown("---")
@@ -572,33 +573,35 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
     if not df_live.empty:
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Kehadiran", len(df_live))
-        c2.metric("Data Valid (Utama)", len(df_live[df_live["Keterangan Status"] == "UTAMA / VALID"]))
-        c3.metric("Absen Ganda", len(df_live[df_live["Keterangan Status"] == "DUPLIKAT / ABSEN GANDA"]))
+        c2.metric("Data Valid (Utama)", len(df_live[df_live["Keterangan Status"] == "UTAMA / VALID"]) if "Keterangan Status" in df_live.columns else len(df_live))
+        c3.metric("Absen Ganda", len(df_live[df_live["Keterangan Status"] == "DUPLIKAT / ABSEN GANDA"]) if "Keterangan Status" in df_live.columns else 0)
         
         g1, g2 = st.columns(2)
         GREEN_GOLD_PALETTE = ['#1B5E20', '#C67D0A', '#2E7D32', '#D87A00', '#4CAF50', '#FFB74D', '#0B3C11', '#B25900']
         
         with g1:
-            fig_p = px.pie(
-                df_live, 
-                names="OPD / Instansi", 
-                hole=0.4, 
-                title="Sebaran OPD Peserta",
-                color_discrete_sequence=GREEN_GOLD_PALETTE
-            )
-            st.plotly_chart(fig_p, use_container_width=True)
+            if "OPD / Instansi" in df_live.columns:
+                fig_p = px.pie(
+                    df_live, 
+                    names="OPD / Instansi", 
+                    hole=0.4, 
+                    title="Sebaran OPD Peserta",
+                    color_discrete_sequence=GREEN_GOLD_PALETTE
+                )
+                st.plotly_chart(fig_p, use_container_width=True)
             
         with g2:
-            df_t = df_live.groupby("Jam Absen").size().reset_index(name="Jumlah")
-            fig_b = px.bar(
-                df_t, 
-                x="Jam Absen", 
-                y="Jumlah", 
-                title="Tren Puncak Jam Kehadiran", 
-                color="Jumlah",
-                color_continuous_scale=['#81C784', '#1B5E20', '#C67D0A', '#B25900']
-            )
-            st.plotly_chart(fig_b, use_container_width=True)
+            if "Jam Absen" in df_live.columns:
+                df_t = df_live.groupby("Jam Absen").size().reset_index(name="Jumlah")
+                fig_b = px.bar(
+                    df_t, 
+                    x="Jam Absen", 
+                    y="Jumlah", 
+                    title="Tren Puncak Jam Kehadiran", 
+                    color="Jumlah",
+                    color_continuous_scale=['#81C784', '#1B5E20', '#C67D0A', '#B25900']
+                )
+                st.plotly_chart(fig_b, use_container_width=True)
     else:
         st.info("Dashboard interaktif akan otomatis aktif setelah ada presensi pertama masuk.")
 
@@ -608,9 +611,18 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
 elif menu_pilihan == "📱 Scan QR Code":
     st.header("📱 Scan QR Code untuk Absensi Digital")
     st.write("Tampilkan QR Code ini pada layar Zoom / Proyektor Aula agar peserta dapat memindai dari HP.")
+    
     app_url = st.text_input("URL Link Absensi Ini:", value="https://absensi-badung.streamlit.app")
     qr_bytes = generate_qr_code(app_url)
+    
     st.image(qr_bytes, caption="Pindai QR Code untuk Membuka Form Presensi", width=280)
+    
+    st.download_button(
+        label="📥 Unduh Gambar QR Code (.png)",
+        data=qr_bytes,
+        file_name="QR_Code_Absensi_Badung.png",
+        mime="image/png"
+    )
 
 # ------------------------------------------------------------
 # HALAMAN 3: PANEL ADMIN
@@ -618,7 +630,6 @@ elif menu_pilihan == "📱 Scan QR Code":
 elif menu_pilihan == "🔐 Panel Admin (Khusus Panitia)":
     st.header("🔐 Panel Otentikasi Admin")
     
-    # Jika Admin belum login, tampilkan form input + tombol
     if not st.session_state.is_admin_logged_in:
         with st.form("admin_login_form"):
             pin_input = st.text_input("Masukkan PIN Keamanan Admin:", type="password")
@@ -627,11 +638,10 @@ elif menu_pilihan == "🔐 Panel Admin (Khusus Panitia)":
             if submit_login:
                 if pin_input == ADMIN_PIN:
                     st.session_state.is_admin_logged_in = True
-                    st.rerun()  # Refresh halaman agar masuk ke dalam
+                    st.rerun()
                 else:
                     st.error("❌ PIN Admin Salah!")
                     
-    # Jika Admin SUDAH login, tampilkan isi panel
     else:
         col_title, col_logout = st.columns([4, 1])
         with col_title:
@@ -641,34 +651,43 @@ elif menu_pilihan == "🔐 Panel Admin (Khusus Panitia)":
                 st.session_state.is_admin_logged_in = False
                 st.rerun()
 
-        st.subheader("✏️ Pengaturan Nama Acara & Opsi Presensi")
-        col_ev1, col_ev2 = st.columns([2, 1])
+        st.subheader("✏️ Pengaturan Nama Acara & Tab Google Sheets")
+        
+        col_ev1, col_ev2, col_ev3 = st.columns([2, 1, 1])
         with col_ev1:
-            new_event_title = st.text_input("Ubah Judul Acara Saat Ini:", value=st.session_state.nama_event)
+            new_event_title = st.text_input("Judul Acara Saat Ini:", value=st.session_state.nama_event)
         with col_ev2:
             new_jenis_presensi = st.selectbox(
                 "Pilih Jenis Presensi:", 
                 ["Presensi Zoom", "Presensi Biasa (Offline / Aula)"],
                 index=0 if st.session_state.jenis_presensi == "Presensi Zoom" else 1
             )
+        with col_ev3:
+            new_sheet_name = st.text_input("Nama Tab di Google Sheets:", value=st.session_state.target_sheet_name)
             
-        if st.button("💾 Simpan Pengaturan Acara Baru"):
+        if st.button("💾 Simpan Pengaturan Acara & Tab Google Sheets"):
             st.session_state.nama_event = new_event_title
             st.session_state.jenis_presensi = new_jenis_presensi
-            st.success("✅ Pengaturan Acara & Jenis Presensi berhasil diperbarui!")
+            st.session_state.target_sheet_name = new_sheet_name
+            
+            # Reload data dari tab baru
+            try:
+                st.session_state.df_absensi = load_data_from_gsheets()
+                st.success(f"✅ Berhasil terhubung ke Tab Google Sheets: '{new_sheet_name}'!")
+            except Exception as e:
+                st.warning(f"⚠️ Tab '{new_sheet_name}' tidak ditemukan di Google Sheets. Pastikan Anda telah membuat tab tersebut di Google Sheets.")
+                
             st.rerun()
 
         st.markdown("---")
         st.subheader("⚙️ Pengaturan Batas Waktu & Kuota Peserta")
         
-        # Pengaturan Cutoff Jam[cite: 3]
         c_timer1, c_timer2 = st.columns(2)
         with c_timer1:
             set_enabled = st.checkbox("Aktifkan Batas Waktu (Jam)", value=st.session_state.cutoff_enabled)
         with c_timer2:
             set_time = st.time_input("Jam Absensi Ditutup:", value=st.session_state.cutoff_time)
             
-        # Pengaturan Batas Maksimal Peserta
         c_quota1, c_quota2 = st.columns(2)
         with c_quota1:
             set_max_enabled = st.checkbox("Aktifkan Batas Maksimal Kuota Peserta", value=st.session_state.max_peserta_enabled)
@@ -692,7 +711,7 @@ elif menu_pilihan == "🔐 Panel Admin (Khusus Panitia)":
             df_view = df_res[view_cols]
 
             def style_table(row):
-                if row["Keterangan Status"] == "DUPLIKAT / ABSEN GANDA":
+                if "Keterangan Status" in row and row["Keterangan Status"] == "DUPLIKAT / ABSEN GANDA":
                     return ['background-color: #ffc7ce; color: #9c0006; font-weight: bold;'] * len(row)
                 return ['background-color: #c6efce; color: #006100;'] * len(row)
                 
@@ -716,20 +735,4 @@ elif menu_pilihan == "🔐 Panel Admin (Khusus Panitia)":
                 )
             
         else:
-            st.info("Belum ada data presensi yang masuk.")
-
-        st.markdown("---")
-        st.subheader("🧹 Manajemen Event Baru (Reset Data)")
-        with st.expander("⚠️ Klik di sini jika Ingin Mengosongkan Data untuk Event Baru"):
-            st.warning("Tindakan ini akan membackup data acara saat ini lalu mengosongkan daftar presensi untuk event baru.")
-            if st.button("🗑️ Konfirmasi Reset Data untuk Event Baru"):
-                if not st.session_state.df_absensi.empty:
-                    st.session_state.df_absensi.to_csv("BACKUP_EVENT_SEBELUMNYA.csv", index=False)
-                    st.info("📦 Backup data acara sebelumnya otomatis disimpan ke 'BACKUP_EVENT_SEBELUMNYA.csv'.")
-                
-                st.session_state.df_absensi = pd.DataFrame(columns=[
-                    "Waktu Absen", "Jam Absen", "Jenis Presensi", "Nama Peserta (EYD)", "NIP", "Jabatan (EYD)", 
-                    "OPD / Instansi", "Email", "Tanda Tangan", "Keterangan Status", "_ttd_bytes"
-                ])
-                st.success("✅ Seluruh data absensi berhasil dikosongkan! Siap digunakan untuk event baru.")
-                st.rerun()
+            st.info("Belum ada data presensi yang masuk pada tab ini.")

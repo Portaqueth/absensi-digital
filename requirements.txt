@@ -6,3 +6,4 @@ openpyxl
 Pillow
 numpy
 streamlit-drawable-canvas
+st-gsheets-connection
