@@ -367,7 +367,7 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# BROADCAST BANNER NOTICE (OPSI 2)
+# BROADCAST BANNER NOTICE
 if st.session_state.broadcast_text.strip():
     st.markdown(f"""
         <div class="broadcast-banner">
@@ -382,7 +382,7 @@ if st.session_state.broadcast_text.strip():
 st.sidebar.title("📌 Menu Navigasi")
 menu_pilihan = st.sidebar.radio(
     "Pilih Halaman:",
-    ["📝 Form Absensi & Dashboard", "📱 Scan QR Code", "🔐 Panel Admin (Khusus Panitia)"]
+    ["📝 Form Absensi Peserta", "📱 Scan QR Code", "🔐 Panel Admin (Khusus Panitia)"]
 )
 
 if menu_pilihan != "🔐 Panel Admin (Khusus Panitia)":
@@ -561,9 +561,9 @@ def export_formatted_excel(df: pd.DataFrame, nama_event: str) -> bytes:
     return output.getvalue()
 
 # ------------------------------------------------------------
-# HALAMAN 1: FORM ABSENSI & DASHBOARD
+# HALAMAN 1: FORM ABSENSI PESERTA (MURNI TANPA DASHBOARD PUBLIC)
 # ------------------------------------------------------------
-if menu_pilihan == "📝 Form Absensi & Dashboard":
+if menu_pilihan in ["📝 Form Absensi Peserta", "📝 Form Absensi & Dashboard"]:
     now_time = datetime.datetime.now().time()
     
     is_closed_by_time = st.session_state.cutoff_enabled and (now_time > st.session_state.cutoff_time)
@@ -612,6 +612,7 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
                         st.session_state.draft_nip = ""
                         st.session_state.draft_jabatan = ""
                         st.session_state.draft_email = ""
+                        st.session_state.draft_manual_opd = ""
                     st.success("✅ Data presensi lama berhasil dihapus dan diperbarui!")
                     st.rerun()
                     
@@ -757,6 +758,7 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
                         st.session_state.draft_nip = ""
                         st.session_state.draft_jabatan = ""
                         st.session_state.draft_email = ""
+                        st.session_state.draft_manual_opd = ""
                         st.rerun()
 
         # 3. FORM ISIAN UTAMA
@@ -775,11 +777,15 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
                     default_opd_idx = LIST_OPD.index(st.session_state.draft_opd) if st.session_state.draft_opd in LIST_OPD else 0
                     in_opd = st.selectbox("OPD / Instansi Peserta:", LIST_OPD, index=default_opd_idx)
                     
+                    manual_opd = st.text_input(
+                        "Tuliskan Nama Instansi / OPD Anda (Khusus jika memilih 'Lainnya / Instansi luar'):",
+                        value=st.session_state.draft_manual_opd,
+                        placeholder="Contoh: Kementerian Hukum dan HAM / Universitas Udayana"
+                    )
+                    
                     if in_opd == "Lainnya / Instansi luar":
-                        manual_opd = st.text_input("Tuliskan Nama Instansi / OPD Anda:", value=st.session_state.draft_manual_opd, placeholder="Contoh: kementerian hukum dan ham")
                         in_opd_final = format_nama_instansi(manual_opd) if manual_opd.strip() else "Instansi Lainnya"
                     else:
-                        manual_opd = ""
                         in_opd_final = in_opd
                     
                     if is_zoom_mode:
@@ -833,6 +839,10 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
                     nip_valid, nip_msg = validate_nip(in_nip)
                     email_valid, email_clean, email_msg = (validate_email(in_email) if is_zoom_mode else (True, "-", ""))
                     
+                    # FITUR PERINGATAN DINI OPD (OPSI 3)
+                    if in_opd != "Lainnya / Instansi luar" and manual_opd.strip() != "":
+                        st.warning(f"⚠️ **Peringatan Pilihan OPD**: Anda memilih OPD **'{in_opd}'**, tetapi juga mengisikan teks **'{manual_opd}'**. Sistem akan mencatat Anda sebagai peserta dari **'{in_opd}'**. Jika Anda berasal dari instansi luar, silakan ubah pilihan OPD di atas menjadi **'Lainnya / Instansi luar'**.")
+                    
                     if not in_nama.strip():
                         st.error("⚠️ Nama Peserta wajib diisi!")
                     elif not nip_valid:
@@ -858,46 +868,6 @@ if menu_pilihan == "📝 Form Absensi & Dashboard":
                         }
                         st.rerun()
 
-    # DASHBOARD MONITORING
-    st.markdown("---")
-    st.subheader("📊 Dashboard Monitoring Real-Time")
-    df_live = st.session_state.df_absensi
-    
-    if not df_live.empty:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Kehadiran", len(df_live))
-        c2.metric("Data Valid (Utama)", len(df_live[df_live["Keterangan Status"] == "UTAMA / VALID"]) if "Keterangan Status" in df_live.columns else len(df_live))
-        c3.metric("Absen Ganda", len(df_live[df_live["Keterangan Status"] == "DUPLIKAT / ABSEN GANDA"]) if "Keterangan Status" in df_live.columns else 0)
-        
-        g1, g2 = st.columns(2)
-        GREEN_GOLD_PALETTE = ['#1B5E20', '#C67D0A', '#2E7D32', '#D87A00', '#4CAF50', '#FFB74D', '#0B3C11', '#B25900']
-        
-        with g1:
-            if "OPD / Instansi" in df_live.columns:
-                fig_p = px.pie(
-                    df_live, 
-                    names="OPD / Instansi", 
-                    hole=0.4, 
-                    title="Sebaran OPD Peserta",
-                    color_discrete_sequence=GREEN_GOLD_PALETTE
-                )
-                st.plotly_chart(fig_p, use_container_width=True)
-            
-        with g2:
-            if "Jam Absen" in df_live.columns:
-                df_t = df_live.groupby("Jam Absen").size().reset_index(name="Jumlah")
-                fig_b = px.bar(
-                    df_t, 
-                    x="Jam Absen", 
-                    y="Jumlah", 
-                    title="Tren Puncak Jam Kehadiran", 
-                    color="Jumlah",
-                    color_continuous_scale=['#81C784', '#1B5E20', '#C67D0A', '#B25900']
-                )
-                st.plotly_chart(fig_b, use_container_width=True)
-    else:
-        st.info("Dashboard interaktif akan otomatis aktif setelah ada presensi pertama masuk.")
-
 # ------------------------------------------------------------
 # HALAMAN 2: SCAN QR CODE
 # ------------------------------------------------------------
@@ -918,7 +888,7 @@ elif menu_pilihan == "📱 Scan QR Code":
     )
 
 # ------------------------------------------------------------
-# HALAMAN 3: PANEL ADMIN
+# HALAMAN 3: PANEL ADMIN (TERMASUK DASHBOARD MONITORING EXCLUSIVE)
 # ------------------------------------------------------------
 elif menu_pilihan == "🔐 Panel Admin (Khusus Panitia)":
     st.header("🔐 Panel Otentikasi Admin")
@@ -944,7 +914,48 @@ elif menu_pilihan == "🔐 Panel Admin (Khusus Panitia)":
                 st.session_state.is_admin_logged_in = False
                 st.rerun()
 
-        # 1. PENGATURAN ACARA & BROADCAST NOTICE (OPSI 2)
+        # DASHBOARD MONITORING REAL-TIME (DIPINDAHKAN KHUSUS KE PANEL ADMIN)
+        st.subheader("📊 Dashboard Monitoring Real-Time")
+        df_live = st.session_state.df_absensi
+        
+        if not df_live.empty:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Kehadiran", len(df_live))
+            c2.metric("Data Valid (Utama)", len(df_live[df_live["Keterangan Status"] == "UTAMA / VALID"]) if "Keterangan Status" in df_live.columns else len(df_live))
+            c3.metric("Absen Ganda", len(df_live[df_live["Keterangan Status"] == "DUPLIKAT / ABSEN GANDA"]) if "Keterangan Status" in df_live.columns else 0)
+            
+            g1, g2 = st.columns(2)
+            GREEN_GOLD_PALETTE = ['#1B5E20', '#C67D0A', '#2E7D32', '#D87A00', '#4CAF50', '#FFB74D', '#0B3C11', '#B25900']
+            
+            with g1:
+                if "OPD / Instansi" in df_live.columns:
+                    fig_p = px.pie(
+                        df_live, 
+                        names="OPD / Instansi", 
+                        hole=0.4, 
+                        title="Sebaran OPD Peserta",
+                        color_discrete_sequence=GREEN_GOLD_PALETTE
+                    )
+                    st.plotly_chart(fig_p, use_container_width=True)
+                
+            with g2:
+                if "Jam Absen" in df_live.columns:
+                    df_t = df_live.groupby("Jam Absen").size().reset_index(name="Jumlah")
+                    fig_b = px.bar(
+                        df_t, 
+                        x="Jam Absen", 
+                        y="Jumlah", 
+                        title="Tren Puncak Jam Kehadiran", 
+                        color="Jumlah",
+                        color_continuous_scale=['#81C784', '#1B5E20', '#C67D0A', '#B25900']
+                    )
+                    st.plotly_chart(fig_b, use_container_width=True)
+        else:
+            st.info("Dashboard interaktif akan otomatis aktif setelah ada presensi pertama masuk.")
+
+        st.markdown("---")
+
+        # 1. PENGATURAN ACARA & BROADCAST NOTICE
         st.subheader("✏️ Pengaturan Acara & Pengumuman Broadcast Peserta")
         
         col_ev1, col_ev2, col_ev3 = st.columns([2, 1, 1])
@@ -981,7 +992,7 @@ elif menu_pilihan == "🔐 Panel Admin (Khusus Panitia)":
 
         st.markdown("---")
         
-        # 2. PENGATURAN PIN ADMIN DYNAMIC (PENGUBAH PIN ADMIN)
+        # 2. PENGATURAN PIN ADMIN DYNAMIC
         col_pin1, col_pin2 = st.columns(2)
         with col_pin1:
             st.subheader("🔑 Ubah PIN Keamanan Admin")
@@ -1035,7 +1046,6 @@ elif menu_pilihan == "🔐 Panel Admin (Khusus Panitia)":
             view_cols = [c for c in df_res.columns if c != "_ttd_bytes"]
             df_view = df_res[view_cols]
 
-            # Fitur Search Box Peserta
             search_query = st.text_input("🔍 Cari Peserta Instant (Nama / NIP / OPD):", placeholder="Ketik Nama, NIP, atau OPD...")
             if search_query.strip():
                 df_view = df_view[
